@@ -17,7 +17,7 @@ import org.apache.tez.dag.history.logging.proto.ProtoMessageReader;
  * This class is used to read all available query_data files and extract the @c ManifestEntryProto
  * events. The events are accessbile by applicationID (as specified in each event).
  */
-public class QueryMap extends MapBase {
+class QueryMap extends MapBase {
     private ConcurrentHashMap<String,ArrayList<ManifestEntryProto>> eventsByApp = null;  ///< application ID to event list
 
     /**

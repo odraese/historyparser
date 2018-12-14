@@ -9,8 +9,7 @@
             "console": "internalConsole",
             "stopOnEntry": false,
             "mainClass": "com.hortonworks.historyparser.App",
-            // "args": "hdfs://ctr-e138-1518143905142-564127-01-000002.hwx.site:8020/warehouse/tablespace/external/hive/sys.db/",
-            "args": "/eventSourceDir $HOME/report.txt",
+            "args": "TaskFeatureExtractor /eventSourceDir $HOME/report.txt,
             "projectName": "historyparser",
             "vmArgs": "-Xmx8G -XX:+UseG1GC -XX:+UseStringDeduplication"
         }

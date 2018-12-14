@@ -5,6 +5,9 @@ import static com.google.common.base.Preconditions.checkState;
 
 import java.util.List;
 
+import com.hortonworks.historyparser.processors.TaskFeatureExtractor;
+import com.hortonworks.historyparser.processors.TaskTimeEventProcessor;
+
 import org.apache.hadoop.fs.Path;
 import org.apache.tez.dag.history.logging.proto.HistoryLoggerProtos.HistoryEventProto;
 
@@ -17,6 +20,10 @@ import org.apache.tez.dag.history.logging.proto.HistoryLoggerProtos.HistoryEvent
  * maximum event amount, which @c EcentProcessor to use and so on...
  */
 public class App {
+    private static final int PROCESSOR_ARG_IDX     = 0;    ///< program argument index for processor
+    private static final int SOURCE_DIR_ARG_IDX    = 1;    ///< program argument index for source dir
+    private static final int TARGET_REPORT_ARG_IDX = 2;    ///< program argument index for report
+
     private Path           baseDir       = null;               ///< base directory with protobuf content
     private QueryMap       queryMap      = null;               ///< content of the query_data directory
     private DagMap         dagMap        = null;               ///< content of the dag_data directory
@@ -128,16 +135,53 @@ public class App {
         checkState( (false == readQueryData || null != queryMap) && null != dagMap, "The proto files are not read" );
         checkState( null != procssor, "No EventProcessor set yet!" );
 
+        int deliveredEvents = 0;   ///< dont deliver more than the max
+
         // group by application ID
         for ( String applicationID : dagMap.getApplicationIDs() ) {
             List<HistoryEventProto> dagEvents = dagMap.getEventsForApplID( applicationID );
 
-            for ( HistoryEventProto hpe : dagEvents ) 
+            for ( HistoryEventProto hpe : dagEvents ) {
                 procssor.processNextEvent( applicationID, hpe );
+
+                if ( maxEvents <= ++deliveredEvents )
+                    break;
+            }
+
+            if ( maxEvents <= deliveredEvents )
+                break;
         }
 
         // nore more events to push, start the aggregation or post processing
         procssor.allEventsReceived();
+    }
+
+    /**
+     * Helper to configure the application for a specific processor.
+     * This helper creates the right processor instance and configrues the application
+     * for it.
+     * 
+     * @param args The program arguments
+     * @param processor The class identifier for the processor
+     */
+    private void setupFor( String[] args, Class<?> processor ) {
+        EventProcessor p = null;
+
+        if ( TaskTimeEventProcessor.class == processor ) {
+            p = new TaskTimeEventProcessor( args[TARGET_REPORT_ARG_IDX], false );
+            setReadQueryData( false );          // query_data (QueryMap) is not needed    
+        }
+        else if ( TaskFeatureExtractor.class == processor ) {
+            p = new TaskFeatureExtractor( args[TARGET_REPORT_ARG_IDX] );
+            setReadQueryData( false );          // query_data (QueryMap) is not needed    
+        }
+
+        if ( null == p )
+            throw new IllegalArgumentException( "Unsupported processor class" );
+
+        // for debugging, you can limit the amount of data to read
+        // setEventLimit( 1000 );
+        setEventProcessor( p );
     }
 
     /**
@@ -151,21 +195,26 @@ public class App {
     public static void main( String[] args ) {
         long startTime = System.currentTimeMillis();
 
-        if ( 2 > args.length ) {
-            System.err.println( "Pass in the path to the event data and the target report file." );
+        if ( 3 > args.length ) {
+            System.err.println( "Usage: App <processorClassName> <pathToSourceFileDir> <reportName>" );
             System.exit(8);
         }
 
-        Path basePath = new Path( args[0] );
+        Path basePath = new Path( args[SOURCE_DIR_ARG_IDX] );
         App  app      = new App( basePath );
 
-        TaskTimeEventProcessor p = new TaskTimeEventProcessor( args[1], false );
-        app.setEventProcessor( p );             // use this event processor
-        app.setReadQueryData( false );          // query_data (QueryMap) is not needed
+        // find the processor class and configure it
+        String processorName = EventProcessor.class.getPackage().getName() 
+                               + ".processors." + args[PROCESSOR_ARG_IDX];
 
-        // read all available events (default)
-        // app.setEventLimit( 20000 ); 
-
+        try {
+            Class<?> processor = Class.forName( processorName );
+            app.setupFor( args, processor );
+        }
+        catch( ClassNotFoundException cnfe ) {
+            System.err.println( "Unknown event processor: " + args[0] );
+        }
+        
         System.out.println( "Starting to read protofiles..." );
         app.readProtoFiles();   // we don't need queryData for this scenario
 

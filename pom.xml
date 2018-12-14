@@ -101,6 +101,7 @@
             <mainClass>com.hortonworks.historyparser.App</mainClass>
             <!-- Override via -Dexec.args="arg0 arg1" -->
             <arguments>
+              <argument>TaskFeatureExtractor</argument>
               <argument>eventDataSourceDire</argument>
               <argument>/tmp/report.txt"</argument>
             </arguments>

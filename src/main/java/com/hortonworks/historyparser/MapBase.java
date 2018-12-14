@@ -19,7 +19,7 @@ import org.apache.tez.dag.api.TezConfiguration;
  * scan for the protobuffer files and uses an executor service to read each of them. It also 
  * provides a central mechanism (@c waitForFinish) to block until all files are read.
  */
-public abstract class MapBase {
+abstract class MapBase {
     private static AtomicInteger   queueLength = new AtomicInteger( 0 );  ///< number jobs, submitted to executor
     private static boolean         cancelled = false;                     ///< cancel requested by reporter
     private static ExecutorService service =                              ///< used to have parallel file read

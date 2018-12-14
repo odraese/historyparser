@@ -24,7 +24,7 @@ import org.apache.tez.dag.history.logging.proto.ProtoMessageReader;
  * events. The events are accessbile by applicationID (as specified in each event) or by their
  * caller (callerID from the DAG_SUBMITTED event).
  */
-public class DagMap extends MapBase {
+class DagMap extends MapBase {
     private ConcurrentHashMap<String, String>                       dagID2CallerID = null;  ///< maps DAG id to caller 
     private ConcurrentHashMap<String, ArrayList<HistoryEventProto>> callerID2Event = null;  ///< maps callerID to event list
     private ConcurrentHashMap<String, ArrayList<HistoryEventProto>> applID2Event   = null;  ///< maps application ID to event list
