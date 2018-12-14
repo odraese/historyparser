@@ -31,7 +31,7 @@ mvn compile exec:java -Dexec.args="TaskTimeEventProcessor /sourcePath targetFile
   and write these aggregates to the report. So, it produces basic LLAP application
   statistics.
 
-### Extending
+## Extending
 New scenarios can be added by
 * implementing a ``EventProcessor``, which handled the event stream
 * specifying the ``EventProcessor`` in ``App.setupFor`` method
