@@ -9,27 +9,37 @@ times, grouped by application ID. But the tool is designed in a way that
 allows easy enhancing it for other scenarios.
 
 ### Configuration
-The tool takes two arguments. The first one is the path to the directory,holding the query_data and dag_data directories. This can either be a 
-local directory or also a HDFS path. The second parameter takes the
-filename for the report to generate. Both paths are also specified in
-the ```pom.xml``` file to have standard parameters for Maven based
-program execution. You need to adjust the arguments in the POM if you
-want to run the program via Maven.
+The tool takes three arguments. The first one is the name of a event processor class (within the 
+``processors`` package. The second one is the path to the directory,holding the query_data and 
+dag_data directories. This can either be a local directory or also a HDFS path. The third 
+parameter takes the filename for the report to generate. All three parameters are also specified in
+the ``pom.xml`` file to have standard parameters for Maven based program execution. You need 
+to adjust the arguments in the POM if you want to run the program via Maven.
 
 ###  Starting the tool
 ```
-mvn compile exec:java -Dexec.args="/sourcePath targetFile.txt"
+mvn compile exec:java -Dexec.args="TaskTimeEventProcessor /sourcePath targetFile.txt"
 ```
+
+## Current event processors
+**Both processors extract and work on LLAP related tasks only!**
+
+* ``TaskFeatureExtractor`` is parsing the dag_data for HistoryEventProto and writes each
+  task finish event as a single line with its counter values to the report. It is good
+  to produce a text file that can be mined for specific task features.
+* ``TaskTimeEventProcessor`` is aggregating task execution times (min/max/count/avg/stdDev) 
+  and write these aggregates to the report. So, it produces basic LLAP application
+  statistics.
 
 ### Extending
 New scenarios can be added by
-* implementing a ```EventProcessor```, which handled the event stream
-* specifying the ```EventProcessor``` in ```App```
-* configuring event maximum, filters, ... in ```App```
+* implementing a ``EventProcessor``, which handled the event stream
+* specifying the ``EventProcessor`` in ``App.setupFor`` method
+* configuring event maximum, filters, ... in ``App``
 
 ### Dependencies
 * The project defines multiple Tez libraries as dependencies, which are
   downloaded by Maven upon first compile.
-* Based on amount of source data and ```EventProcessor``` implementation,
-  you might need to increase the heap size of your JVM like ```-Xmx8G -XX:+UseG1GC 
-  -XX:+UseStringDeduplication```
+* Based on amount of source data and ``EventProcessor`` implementation,
+  you might need to increase the heap size of your JVM like ``-Xmx8G -XX:+UseG1GC 
+  -XX:+UseStringDeduplication``
