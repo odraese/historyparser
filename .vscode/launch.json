@@ -9,7 +9,7 @@
             "console": "internalConsole",
             "stopOnEntry": false,
             "mainClass": "com.hortonworks.historyparser.App",
-            "args": "TaskFeatureExtractor /eventSourceDir $HOME/report.txt,
+            "args": "TaskFeatureExtractor /eventSourceDir $HOME/report.txt",
             "projectName": "historyparser",
             "vmArgs": "-Xmx8G -XX:+UseG1GC -XX:+UseStringDeduplication"
         }
