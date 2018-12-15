@@ -118,6 +118,8 @@ public class TaskFeatureExtractor implements EventProcessor {
         String containerID = taskAtmtIDToContainerID.get( event.getTaskAttemptId() );
         if ( null == containerID ) 
             containerID = "";
+        else 
+            taskAtmtIDToContainerID.remove( event.getTaskAttemptId() );   // not needed anymore
 
         sb.append( event.getEventTime() ).append( '|' ) 
           .append( containerID ).append( '|' )

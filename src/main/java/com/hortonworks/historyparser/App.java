@@ -2,6 +2,7 @@ package com.hortonworks.historyparser;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.base.Preconditions.checkArgument;
 
 import java.util.List;
 
@@ -30,6 +31,7 @@ public class App {
     private EventProcessor procssor      = null;               ///< consumer for dag_data events
     private int            maxEvents     = Integer.MAX_VALUE;  ///< puts a limit on read events
     private boolean        readQueryData = true;               ///< allows skipping of query_data read
+    private boolean        useStreaming  = false;              ///< pass events directly to processor
 
     /**
      * Creates a new application instance for a given base directory.
@@ -80,6 +82,17 @@ public class App {
     }
 
     /**
+     * Enables streaming of events rather then storing in the @c DagMap.
+     * Streaming can only be used if the query_data events are not required.
+     * 
+     * @param streamIt the new streaming state
+     */
+    public void setStreaming( boolean streamIt ) {
+        checkArgument( !streamIt || !readQueryData , "Can't use streaming with QueryData read" );
+        useStreaming = streamIt;
+    }
+
+    /**
      * Triggers the parallel read of the protobuf files.
      * The method is actually using the @c DagMap and @c QueryMap classes to read the protobuf file
      * content through an executor service for maximum parallelism. This method will block until these
@@ -92,7 +105,10 @@ public class App {
         if ( readQueryData )
             queryMap = new QueryMap( new Path( baseDir, "query_data" ) );
 
-        dagMap = new DagMap( new Path( baseDir, "dag_data" ), null!=procssor?procssor.getEventFilter():null );
+        if ( useStreaming ) 
+            dagMap = new DagMap( new Path( baseDir, "dag_data" ), procssor );
+        else
+            dagMap = new DagMap( new Path( baseDir, "dag_data" ), null!=procssor?procssor.getEventFilter():null );
 
         // wait for asynchronous read operations to finish
         if ( null != dagMap ) {
@@ -174,6 +190,7 @@ public class App {
         else if ( TaskFeatureExtractor.class == processor ) {
             p = new TaskFeatureExtractor( args[TARGET_REPORT_ARG_IDX] );
             setReadQueryData( false );          // query_data (QueryMap) is not needed    
+            setStreaming( true );               // pass events directly to processor
         }
 
         if ( null == p )
@@ -218,8 +235,10 @@ public class App {
         System.out.println( "Starting to read protofiles..." );
         app.readProtoFiles();   // we don't need queryData for this scenario
 
-        System.out.println( "Iterating protofile content..." );
-        app.iterateDAGEntries();
+        if ( !app.useStreaming ) {
+            System.out.println( "Iterating protofile content..." );
+            app.iterateDAGEntries();
+        }
         
         System.out.println();
         System.out.println( "Done (with a total of " + app.dagMap.getTotalNumberEvents() + 

@@ -32,6 +32,7 @@ class DagMap extends MapBase {
     private AtomicInteger   eventsWithoutCaller = null;  ///< counts the events for which we don't find a caller in dagID2CallerID
     private AtomicInteger   filteredEvents      = null;  ///< amount of events removed by event type filtering
     private HashSet<String> filterEventTypes    = null;  ///< list of event types to include
+    private EventProcessor  streamTarget        = null;  ///< stream instead of collecting
 
     /**
      * Creates a new reader for the dag_data directory content.
@@ -52,6 +53,38 @@ class DagMap extends MapBase {
         eventsWithoutCaller = new AtomicInteger(0);
         filteredEvents = new AtomicInteger( 0 );
 
+        if ( null != filters ) {
+            filterEventTypes = new HashSet<>();
+
+            for ( String filter : filters ) {
+                checkArgument( null != filter, "Can't specify null in filters" );
+                checkArgument( 0 < filter.trim().length(), "Filter can't be empty string" );
+                filterEventTypes.add( filter );
+            }
+        }
+
+        init( path );  // kick off the reading of the directory content
+    }
+
+    /**
+     * Creates a new instance for streaming processing.
+     * Normally, this class holds on to all the events that qualify for the filters. This
+     * is required to group by callerID or applicationID because the consumers might want
+     * to iterate over the data by these groups. In streaming mode, where the processor is
+     * directly passed into the @c DagMap here, we don't store any of the events but directly
+     * forward them to the stream processor. This implicit disables the grouping by callerID
+     * and applicationID - these lists will remain @c null.
+     * 
+     * @param path The base directory path for the protobuf files
+     * @param streamTarget The processor for the events
+     */
+    public DagMap( Path path, EventProcessor streamTarget ) {
+        totalNumberEvents = new AtomicInteger(0);
+        eventsWithoutCaller = new AtomicInteger(0);  // this will remain zero for streaming
+        filteredEvents = new AtomicInteger( 0 );
+
+        this.streamTarget = streamTarget;
+        String[] filters = streamTarget.getEventFilter();
         if ( null != filters ) {
             filterEventTypes = new HashSet<>();
 
@@ -144,59 +177,71 @@ class DagMap extends MapBase {
             ProtoMessageReader<HistoryEventProto> eventReader =  hiveEventLogger.getReader( path );
             HistoryEventProto event = null;
             while( null != (event = eventReader.readEvent()) ) {
-                String callerID = dagID2CallerID.get( event.getDagId() );
-
                 totalNumberEvents.incrementAndGet();
 
-                if ( null == callerID ) {
-                    if ( "DAG_SUBMITTED".equals( event.getEventType() ) ) {
-                        for ( int edIdx = 0; edIdx < event.getEventDataCount(); ++edIdx ) {
-                            if ( "callerId".equals( event.getEventData( edIdx ).getKey() ) ) {
-                                callerID = event.getEventData( edIdx ).getValue();
-                                dagID2CallerID.putIfAbsent( event.getDagId(), callerID );
+                if ( null == streamTarget ) {
+                    String callerID = dagID2CallerID.get( event.getDagId() );
 
-                                break;
+                    if ( null == callerID ) {
+                        if ( "DAG_SUBMITTED".equals( event.getEventType() ) ) {
+                            for ( int edIdx = 0; edIdx < event.getEventDataCount(); ++edIdx ) {
+                                if ( "callerId".equals( event.getEventData( edIdx ).getKey() ) ) {
+                                    callerID = event.getEventData( edIdx ).getValue();
+                                    dagID2CallerID.putIfAbsent( event.getDagId(), callerID );
+    
+                                    break;
+                                }
                             }
                         }
                     }
-                }
-
-                if ( null != callerID ) {
-                    if ( null == filterEventTypes || filterEventTypes.contains( ( event.getEventType() ) ) ) {
-                        // map the callerID (matching entry from QueryMap) to event list
-                        ArrayList<HistoryEventProto> eventList = callerID2Event.get( callerID );
-                        if ( null == eventList ) {
-                            eventList = new ArrayList<>();
-                            ArrayList<HistoryEventProto> prev = callerID2Event.putIfAbsent( callerID, eventList );
-                            if ( null != prev ) 
-                                eventList = prev;
-                        }
-        
-                        synchronized( eventList ) {
-                            eventList.add( event );
-                        }
-
-                        // also map applicationID to list of events
-                        if ( null != event.getAppId() && 0 < event.getAppId().trim().length() ) {
-                            eventList = applID2Event.get( event.getAppId() );
-        
+    
+                    if ( null != callerID ) {
+                        if ( null == filterEventTypes || filterEventTypes.contains( ( event.getEventType() ) ) ) {
+                            // map the callerID (matching entry from QueryMap) to event list
+                            ArrayList<HistoryEventProto> eventList = callerID2Event.get( callerID );
                             if ( null == eventList ) {
                                 eventList = new ArrayList<>();
-                                ArrayList<HistoryEventProto> prev = applID2Event.putIfAbsent( event.getAppId(), eventList );
-                                if ( null != prev )
+                                ArrayList<HistoryEventProto> prev = callerID2Event.putIfAbsent( callerID, eventList );
+                                if ( null != prev ) 
                                     eventList = prev;
                             }
-        
+            
                             synchronized( eventList ) {
                                 eventList.add( event );
                             }
+    
+                            // also map applicationID to list of events
+                            if ( null != event.getAppId() && 0 < event.getAppId().trim().length() ) {
+                                eventList = applID2Event.get( event.getAppId() );
+            
+                                if ( null == eventList ) {
+                                    eventList = new ArrayList<>();
+                                    ArrayList<HistoryEventProto> prev = applID2Event.putIfAbsent( event.getAppId(), eventList );
+                                    if ( null != prev )
+                                        eventList = prev;
+                                }
+            
+                                synchronized( eventList ) {
+                                    eventList.add( event );
+                                }
+                            }
+                        }
+                        else 
+                            filteredEvents.incrementAndGet();
+                    }
+                    else
+                        eventsWithoutCaller.incrementAndGet();
+                }
+                else {   // streamTarget
+                    if ( null == filterEventTypes || filterEventTypes.contains( ( event.getEventType() ) ) ) {
+                        // don't store the event, directly forward it to a processor
+                        filteredEvents.incrementAndGet();
+
+                        synchronized( streamTarget ) {
+                            streamTarget.processNextEvent( null, event );
                         }
                     }
-                    else 
-                        filteredEvents.incrementAndGet();
                 }
-                else
-                    eventsWithoutCaller.incrementAndGet();
             }
         }
         catch( EOFException eof ) {
