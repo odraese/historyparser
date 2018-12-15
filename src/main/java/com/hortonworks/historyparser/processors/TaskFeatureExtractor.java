@@ -103,7 +103,7 @@ public class TaskFeatureExtractor implements EventProcessor {
         if ( !headerWritten ) {
             headerWritten = true;
             // column titles
-            addLine( "time|contID|applID|vertexID|dagID|taskID|status|numFailedAttempts|" + 
+            addLine( "time|contID|applID|vertexID|dagID|taskID|status|" + 
                      "hdfsBytesRead|hdfsBytesWritten|hdfsReadOps|hdfsWriteOps|" +
                      "taskDurationMillis|inputRecords|inputSplitLengthBytes|createdFiles|" +
                      "allocatedBytes|allocatedUsedBytes|cacheMissBytes|consumerTimeNano|" +
@@ -125,8 +125,7 @@ public class TaskFeatureExtractor implements EventProcessor {
           .append( event.getVertexId() ).append( '|' )
           .append( event.getDagId() ).append( '|' )
           .append( event.getTaskId() ).append( '|' )
-          .append( getNonNullEventValue( event, "status" ) ).append( '|' )
-          .append( getNonNullEventValue( event, "numFailedTaskAttempts" ) ).append( '|' );
+          .append( getNonNullEventValue( event, "status" ) ).append( '|' );
 
         // counters from JSON event content
         try {
