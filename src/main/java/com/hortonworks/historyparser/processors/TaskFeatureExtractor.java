@@ -19,24 +19,26 @@ import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
 
 /**
- * @c EventProcessor implementation to externalize all task finish event data.
+ * @c EventProcessor implementation to externalize all task attempt finish event data.
  * This implementation is a simple converter from the daga_data protobuf content into a text
  * file, which can be used as input for other processing. It exports the content as '|' 
  * separated list, adding also information from the corresponding Vertex Info event and 
  * filtering the events for LLAP events only.
  */
 public class TaskFeatureExtractor implements EventProcessor {
-    private final static String VERTEX_INIT    = "VERTEX_INITIALIZED"; ///< event type identifier
-    private final static String TASK_FINISHED  = "TASK_FINISHED";      ///< event type identifier
+    private final static String VERTEX_INIT        = "VERTEX_INITIALIZED";    ///< event type identifier
+    private final static String TASK_ATMT_START    = "TASK_ATTEMPT_STARTED";  ///< beginning of a task
+    private final static String TASK_ATMT_FINISHED = "TASK_ATTEMPT_FINISHED"; ///< event type identifier
 
-    private JSONParser                        jsonParser             = null;  ///< shared across all tasks
-    private HashMap<String,HistoryEventProto> vertexIDToVertexInit   = null;  ///< maps vertexID to vertex init event
-    private File                              targetFile             = null;  ///< report file to write to
-    private String[]                          lineBuffer             = null;  ///< holds multiple lines before writing to report
-    private int                               lineBufferIdx          = 0;     ///< next free slot in lineBuffer
-    private boolean                           hadPreviousLineBuffers = false; ///< do we need to overwire or append to report
-    private boolean                           headerWritten          = false; ///< indicator if the header line was already created 
-    private StringBuffer                      sb                     = null;  ///< buffer to create report line output
+    private JSONParser                        jsonParser              = null;  ///< shared across all tasks
+    private HashMap<String,HistoryEventProto> vertexIDToVertexInit    = null;  ///< maps vertexID to vertex init event
+    private HashMap<String,String>            taskAtmtIDToContainerID = null;  ///< stores the container ID
+    private File                              targetFile              = null;  ///< report file to write to
+    private String[]                          lineBuffer              = null;  ///< holds multiple lines before writing to report
+    private int                               lineBufferIdx           = 0;     ///< next free slot in lineBuffer
+    private boolean                           hadPreviousLineBuffers  = false; ///< do we need to overwire or append to report
+    private boolean                           headerWritten           = false; ///< indicator if the header line was already created 
+    private StringBuffer                      sb                      = null;  ///< buffer to create report line output
 
     /**
      * Creates a new feature extractor, writint to the specified report file.
@@ -48,10 +50,11 @@ public class TaskFeatureExtractor implements EventProcessor {
     public TaskFeatureExtractor( String reportFile ) {
         jsonParser = new JSONParser();
         vertexIDToVertexInit = new HashMap<>();
+        taskAtmtIDToContainerID = new HashMap<>();
         sb = new StringBuffer();
 
-        // write 256 lines at a time
-        lineBuffer = new String[256];
+        // write 2K lines at a time
+        lineBuffer = new String[2048];
 
         targetFile = new File( reportFile );
         if ( targetFile.exists() && targetFile.isDirectory() ) 
@@ -60,7 +63,7 @@ public class TaskFeatureExtractor implements EventProcessor {
 
     @Override
     public String[] getEventFilter() {
-        return new String[] { VERTEX_INIT, TASK_FINISHED };
+        return new String[] { VERTEX_INIT, TASK_ATMT_START, TASK_ATMT_FINISHED };
     }
 
     @Override
@@ -70,10 +73,16 @@ public class TaskFeatureExtractor implements EventProcessor {
             if ( null != vertexID ) 
                 vertexIDToVertexInit.put( vertexID, event );
         }
-        else if ( TASK_FINISHED.equals( event.getEventType()) ) {
+        else if ( TASK_ATMT_START.equals( event.getEventType() ) ) {
+            String containerID = getEventValue( event, "containerId" );
+            if ( null != containerID && null != event.getTaskAttemptId() ) {
+                taskAtmtIDToContainerID.put( event.getTaskAttemptId(), containerID );
+            }
+        }
+        else if ( TASK_ATMT_FINISHED.equals( event.getEventType()) ) {
             String vertexID = event.getVertexId();
             if ( null != vertexID && vertexIDToVertexInit.containsKey( vertexID ) )
-                reportTaskFinish( event );
+                reportTaskAttemptFinish( event );
         }
     }
 
@@ -83,18 +92,18 @@ public class TaskFeatureExtractor implements EventProcessor {
     }
 
     /**
-     * Called for every event of type "TASK_FINISH".
+     * Called for every event of type "TASK_ATTEMPT_FINISHED".
      * This method is generating a single line within the report output. It essentially extracts
      * the counters from the event, adds denormalized vertex information and writes it as single
      * line to the output report.
      * 
-     * @param event The task finish event
+     * @param event The task attempt finish event
      */
-    private void reportTaskFinish( HistoryEventProto event ) {
+    private void reportTaskAttemptFinish( HistoryEventProto event ) {
         if ( !headerWritten ) {
             headerWritten = true;
             // column titles
-            addLine( "time|applID|vertexID|dagID|taskID|status|numFailedAttempts|" + 
+            addLine( "time|contID|applID|vertexID|dagID|taskID|status|numFailedAttempts|" + 
                      "hdfsBytesRead|hdfsBytesWritten|hdfsReadOps|hdfsWriteOps|" +
                      "taskDurationMillis|inputRecords|inputSplitLengthBytes|createdFiles|" +
                      "allocatedBytes|allocatedUsedBytes|cacheMissBytes|consumerTimeNano|" +
@@ -105,7 +114,13 @@ public class TaskFeatureExtractor implements EventProcessor {
 
         // directly accessible fields
         sb.setLength( 0 );
+
+        String containerID = taskAtmtIDToContainerID.get( event.getTaskAttemptId() );
+        if ( null == containerID ) 
+            containerID = "";
+
         sb.append( event.getEventTime() ).append( '|' ) 
+          .append( containerID ).append( '|' )
           .append( event.getAppId() ).append( '|' ) 
           .append( event.getVertexId() ).append( '|' )
           .append( event.getDagId() ).append( '|' )
@@ -137,7 +152,6 @@ public class TaskFeatureExtractor implements EventProcessor {
             appendCounter( counters, "ROWS_EMITTED" );
             appendCounter( counters, "SELECTED_ROWGROUPS" );
             appendCounter( counters, "TOTAL_IO_TIME_NS" );
-            appendCounter( counters, "SPECULATIVE_QUEUED_NS" );
             appendCounter( counters, "SPECULATIVE_QUEUED_NS" );
             appendCounter( counters, "SPECULATIVE_RUNNING_NS" );
         }
