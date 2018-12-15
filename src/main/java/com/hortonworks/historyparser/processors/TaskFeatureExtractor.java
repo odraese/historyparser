@@ -30,9 +30,20 @@ public class TaskFeatureExtractor implements EventProcessor {
     private final static String TASK_ATMT_START    = "TASK_ATTEMPT_STARTED";  ///< beginning of a task
     private final static String TASK_ATMT_FINISHED = "TASK_ATTEMPT_FINISHED"; ///< event type identifier
 
+    /// Data keeper POJO for the data of a TASK_ATTEMPT_START event
+    private static class AttemptData {
+        public AttemptData( String nodeID, String contID ) {
+            this.nodeID = nodeID;
+            this.containerID = contID;
+        }
+
+        String nodeID;         ///< the host/node ID
+        String containerID;    ///< unique containerID
+    }
+
     private JSONParser                        jsonParser              = null;  ///< shared across all tasks
     private HashMap<String,HistoryEventProto> vertexIDToVertexInit    = null;  ///< maps vertexID to vertex init event
-    private HashMap<String,String>            taskAtmtIDToContainerID = null;  ///< stores the container ID
+    private HashMap<String,AttemptData>       taskAtmtIDToStart       = null;  ///< stores the task start data
     private File                              targetFile              = null;  ///< report file to write to
     private String[]                          lineBuffer              = null;  ///< holds multiple lines before writing to report
     private int                               lineBufferIdx           = 0;     ///< next free slot in lineBuffer
@@ -50,7 +61,7 @@ public class TaskFeatureExtractor implements EventProcessor {
     public TaskFeatureExtractor( String reportFile ) {
         jsonParser = new JSONParser();
         vertexIDToVertexInit = new HashMap<>();
-        taskAtmtIDToContainerID = new HashMap<>();
+        taskAtmtIDToStart = new HashMap<>();
         sb = new StringBuffer();
 
         // write 2K lines at a time
@@ -74,9 +85,11 @@ public class TaskFeatureExtractor implements EventProcessor {
                 vertexIDToVertexInit.put( vertexID, event );
         }
         else if ( TASK_ATMT_START.equals( event.getEventType() ) ) {
+            String nodeID      = getEventValue( event, "nodeId" );
             String containerID = getEventValue( event, "containerId" );
-            if ( null != containerID && null != event.getTaskAttemptId() ) {
-                taskAtmtIDToContainerID.put( event.getTaskAttemptId(), containerID );
+
+            if ( null != event.getTaskAttemptId() ) {
+                taskAtmtIDToStart.put( event.getTaskAttemptId(), new AttemptData(nodeID, containerID ) );
             }
         }
         else if ( TASK_ATMT_FINISHED.equals( event.getEventType()) ) {
@@ -103,7 +116,7 @@ public class TaskFeatureExtractor implements EventProcessor {
         if ( !headerWritten ) {
             headerWritten = true;
             // column titles
-            addLine( "time|contID|applID|vertexID|dagID|taskID|status|" + 
+            addLine( "time|nodeID|contID|applID|vertexID|dagID|taskID|status|" + 
                      "hdfsBytesRead|hdfsBytesWritten|hdfsReadOps|hdfsWriteOps|" +
                      "taskDurationMillis|inputRecords|inputSplitLengthBytes|createdFiles|" +
                      "allocatedBytes|allocatedUsedBytes|cacheMissBytes|consumerTimeNano|" +
@@ -115,14 +128,23 @@ public class TaskFeatureExtractor implements EventProcessor {
         // directly accessible fields
         sb.setLength( 0 );
 
-        String containerID = taskAtmtIDToContainerID.get( event.getTaskAttemptId() );
-        if ( null == containerID ) 
-            containerID = "";
-        else 
-            taskAtmtIDToContainerID.remove( event.getTaskAttemptId() );   // not needed anymore
+        String nodeID = "";
+        String contID = "";
+
+        AttemptData ad = taskAtmtIDToStart.get( event.getTaskAttemptId() );
+        if ( null != ad ) {
+            if ( null != ad.nodeID )
+                nodeID = ad.nodeID;
+
+            if ( null != ad.containerID )
+                contID = ad.containerID;
+
+            taskAtmtIDToStart.remove( event.getTaskAttemptId() );
+        }
 
         sb.append( event.getEventTime() ).append( '|' ) 
-          .append( containerID ).append( '|' )
+          .append( nodeID ).append( '|' )
+          .append( contID ).append( '|' )
           .append( event.getAppId() ).append( '|' ) 
           .append( event.getVertexId() ).append( '|' )
           .append( event.getDagId() ).append( '|' )
