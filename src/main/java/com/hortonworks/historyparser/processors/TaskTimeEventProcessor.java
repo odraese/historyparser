@@ -21,6 +21,8 @@ import org.apache.tez.dag.history.logging.proto.HistoryLoggerProtos.KVPair;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * EventProcessor implementation to find average task execution times. This
@@ -34,6 +36,8 @@ public class TaskTimeEventProcessor implements EventProcessor {
     private HashMap<String, VertexInitInfo> vertexInfoByID = null; /// < maps vertexID to VertexInitInfo instance
     private String outputFileName = null; /// < where to write thr output report
     private boolean dumpTaskDetailList = false; /// < indicator that we want to dump all task execution
+
+    private final static Logger LOG = LoggerFactory.getLogger( TaskTimeEventProcessor.class );
 
     /**
      * Inner helper class to wrap a @c VERTEX_INITIALIZED event. An instance of this
@@ -407,8 +411,7 @@ public class TaskTimeEventProcessor implements EventProcessor {
             }
         }
         catch( IOException ioe ) {
-            System.err.println( "Failed to write output file: " );
-            ioe.printStackTrace();
+            LOG.error( "Failed to write output file", ioe );
         }
     }
 }

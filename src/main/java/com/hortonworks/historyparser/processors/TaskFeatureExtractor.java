@@ -17,6 +17,8 @@ import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * @c EventProcessor implementation to externalize all task attempt finish event data.
@@ -29,6 +31,8 @@ public class TaskFeatureExtractor implements EventProcessor {
     private final static String VERTEX_INIT        = "VERTEX_INITIALIZED";    ///< event type identifier
     private final static String TASK_ATMT_START    = "TASK_ATTEMPT_STARTED";  ///< beginning of a task
     private final static String TASK_ATMT_FINISHED = "TASK_ATTEMPT_FINISHED"; ///< event type identifier
+
+    private final static Logger LOG = LoggerFactory.getLogger( TaskFeatureExtractor.class );
 
     /// Data keeper POJO for the data of a TASK_ATTEMPT_START event
     private static class AttemptData {
@@ -272,8 +276,7 @@ public class TaskFeatureExtractor implements EventProcessor {
                     writer.println( lineBuffer[lIdx] );
             }
             catch( IOException ioe ) {
-                System.err.println( "Couldn't write to report" );
-                ioe.printStackTrace();
+                LOG.error( "Couldn't write to report", ioe );
                 System.exit( 8 );
             }
 
@@ -302,8 +305,7 @@ public class TaskFeatureExtractor implements EventProcessor {
                 return null != scheduler && "LLAP".equals( scheduler );
             }
             catch( ParseException pe ) {
-                System.err.println( "Invalid JSON document found in " + 
-                                    "servicePlugin of " + VERTEX_INIT );
+                LOG.error( "Invalid JSON document found in servicePlugin of " + VERTEX_INIT, pe );
                 pe.printStackTrace();
             }
         }

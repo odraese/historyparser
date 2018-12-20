@@ -12,6 +12,9 @@ import com.hortonworks.historyparser.processors.TaskTimeEventProcessor;
 import org.apache.hadoop.fs.Path;
 import org.apache.tez.dag.history.logging.proto.HistoryLoggerProtos.HistoryEventProto;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Main application construct to process protobuff history event files. This
  * application might need to adjusted to the specific scenario. It is generally
@@ -24,6 +27,8 @@ public class App {
     private static final int PROCESSOR_ARG_IDX     = 0;    ///< program argument index for processor
     private static final int SOURCE_DIR_ARG_IDX    = 1;    ///< program argument index for source dir
     private static final int TARGET_REPORT_ARG_IDX = 2;    ///< program argument index for report
+
+    private final static Logger LOG = LoggerFactory.getLogger( App.class );
 
     private Path           baseDir       = null;               ///< base directory with protobuf content
     private QueryMap       queryMap      = null;               ///< content of the query_data directory
@@ -40,6 +45,8 @@ public class App {
      */
     public App( Path baseDir ) {
         checkNotNull( baseDir, "Base directory cannot be null" );
+        LOG.info( "Starting history-parser in {}", baseDir.toString() );
+
         this.baseDir = baseDir;
     }
 
@@ -52,6 +59,8 @@ public class App {
      */
     public void setEventProcessor( EventProcessor processor ) {
         checkNotNull( processor, "The event processor can't be null" );
+
+        LOG.info( "Setting event processor {}", processor.getClass().getSimpleName() );
         this.procssor = processor;
     }
 
@@ -67,6 +76,7 @@ public class App {
      */
     public void setEventLimit( int maxEvents ) {
         this.maxEvents = maxEvents;
+        LOG.info( "Limiting input to {} events.", maxEvents );
     }
 
     /**
@@ -79,6 +89,8 @@ public class App {
      */
     public void setReadQueryData( boolean readIt ) {
         readQueryData = readIt;
+
+        LOG.info( "{} reading of query_data.", readIt?"Enabled":"Disabled" );
     }
 
     /**
@@ -90,6 +102,8 @@ public class App {
     public void setStreaming( boolean streamIt ) {
         checkArgument( !streamIt || !readQueryData , "Can't use streaming with QueryData read" );
         useStreaming = streamIt;
+
+        LOG.info( "Switched streaming mode {}", streamIt?"on":"off" );
     }
 
     /**
@@ -100,6 +114,8 @@ public class App {
      */
     public void readProtoFiles() {
         checkState( null == queryMap && null == dagMap, "The proto files were already read" );
+
+        LOG.info( "Start reading the ProtoBuf files" );
 
         // perform asynchronous read of all proto files in these directories 
         if ( readQueryData )
@@ -126,12 +142,13 @@ public class App {
                     sb.append( dagMap.getFilteredEvents() );
                     sb.append( ", survivingDAGEvents: " );
                     sb.append( survivors );
-                    sb.append( ", survivingDAGPercent: " );
-                    sb.append( (survivors * 100) / dagMap.getTotalNumberEvents() );
-                    sb.append( '%' );
+                    if ( 0 < dagMap.getTotalNumberEvents() ) {
+                        sb.append( ", survivingDAGPercent: " );
+                        sb.append( (survivors * 100) / dagMap.getTotalNumberEvents() );
+                        sb.append( '%' );
+                    }
     
-                    System.out.println( sb );
-                    System.out.flush();
+                    LOG.info( sb.toString() );
                     return maxEvents <= survivors;
                 }
             } );
@@ -152,6 +169,7 @@ public class App {
         checkState( null != procssor, "No EventProcessor set yet!" );
 
         int deliveredEvents = 0;   ///< dont deliver more than the max
+        LOG.info( "Start processing of DAG events" );
 
         // group by application ID
         for ( String applicationID : dagMap.getApplicationIDs() ) {
@@ -213,7 +231,7 @@ public class App {
         long startTime = System.currentTimeMillis();
 
         if ( 3 > args.length ) {
-            System.err.println( "Usage: App <processorClassName> <pathToSourceFileDir> <reportName>" );
+            LOG.error( "Usage: App <processorClassName> <pathToSourceFileDir> <reportName>" );
             System.exit(8);
         }
 
@@ -229,19 +247,17 @@ public class App {
             app.setupFor( args, processor );
         }
         catch( ClassNotFoundException cnfe ) {
-            System.err.println( "Unknown event processor: " + args[0] );
+            LOG.error( "Unknown event processor: {}", args[0] );
         }
         
-        System.out.println( "Starting to read protofiles..." );
         app.readProtoFiles();   // we don't need queryData for this scenario
 
         if ( !app.useStreaming ) {
-            System.out.println( "Iterating protofile content..." );
             app.iterateDAGEntries();
         }
         
-        System.out.println();
-        System.out.println( "Done (with a total of " + app.dagMap.getTotalNumberEvents() + 
-                            " events) in " + ((System.currentTimeMillis() - startTime) / 1000) + "s." );
+        LOG.info( "Done (with a total of {} events) in {}s." , 
+                  app.dagMap.getTotalNumberEvents(), 
+                  (System.currentTimeMillis() - startTime) / 1000 );
     }
 }
