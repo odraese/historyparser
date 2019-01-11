@@ -1,4 +1,4 @@
-package com.hortonworks.historyparser;
+package com.cloudera.historyparser;
 
 import org.apache.tez.dag.history.logging.proto.HistoryLoggerProtos.HistoryEventProto;
 

@@ -1,4 +1,4 @@
-package com.hortonworks.historyparser.processors;
+package com.cloudera.historyparser.processors;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -15,7 +15,8 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 
-import com.hortonworks.historyparser.EventProcessor;
+import com.cloudera.historyparser.EventProcessor;
+
 import org.apache.tez.dag.history.logging.proto.HistoryLoggerProtos.HistoryEventProto;
 import org.apache.tez.dag.history.logging.proto.HistoryLoggerProtos.KVPair;
 import org.json.simple.JSONObject;

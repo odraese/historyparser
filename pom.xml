@@ -50,6 +50,18 @@
       <artifactId>json-simple</artifactId>
       <version>1.1.1</version>
     </dependency>    
+
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+      <version>1.8.0-beta2</version>
+    </dependency>  
+
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-log4j12</artifactId>
+      <version>1.8.0-beta2</version>
+    </dependency>
   </dependencies>
 
   <build>
@@ -98,12 +110,15 @@
             </execution>
           </executions>
           <configuration>
-            <mainClass>com.hortonworks.historyparser.App</mainClass>
+            <mainClass>com.cloudera.historyparser.App</mainClass>
             <!-- Override via -Dexec.args="arg0 arg1" -->
             <arguments>
               <argument>TaskFeatureExtractor</argument>
-              <argument>eventDataSourceDire</argument>
-              <argument>/tmp/report.txt"</argument>
+              <argument>-i</argument>
+              <argument>/mysourcedirectory/ats</argument>
+              <argument>-o</argument>
+              <argument>/mytargetdirectory/report.txt</argument>
+              <argument>-ats</argument>
             </arguments>
           </configuration>
         </plugin>

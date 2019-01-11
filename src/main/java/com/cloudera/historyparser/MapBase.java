@@ -1,4 +1,4 @@
-package com.hortonworks.historyparser;
+package com.cloudera.historyparser;
 
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
@@ -11,6 +11,8 @@ import org.apache.hadoop.fs.LocatedFileStatus;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.RemoteIterator;
 import org.apache.tez.dag.api.TezConfiguration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Base class of protobuffer based event readers.
@@ -26,6 +28,9 @@ abstract class MapBase {
         Executors.newFixedThreadPool( Runtime.getRuntime().availableProcessors() );
 
     protected Configuration conf = new TezConfiguration();  ///< empty/dummy configuration       
+
+    /// private logger instance
+    private final static Logger LOG = LoggerFactory.getLogger( MapBase.class );
 
     /**
      * Dunction interface to be notified once per second to report about the progress.
@@ -59,34 +64,73 @@ abstract class MapBase {
             if ( fs.isDirectory( path ) ) {
                 RemoteIterator<LocatedFileStatus> it = fs.listFiles( path, true );
 
-                while ( it.hasNext() ) {
-                    LocatedFileStatus lfs = it.next();
+                Runnable scanTask = (new Runnable(){
+                    RemoteIterator<LocatedFileStatus> fileIterator = null;
 
-                    synchronized( service ) {
-                        // submit each file read as parallel executable operation
-                        service.submit( (new Runnable(){
-                            private Path scanPath = null;
-    
-                            Runnable setPath( Path p ) {
-                                queueLength.incrementAndGet();
-                                scanPath = p;
-                                return this;
+                    Runnable setIterator( RemoteIterator<LocatedFileStatus> it ) {
+                        fileIterator = it;
+                        return this;
+                    }
+                
+                    @Override
+                    public void run() {
+                        try {
+                            LOG.info( "Starting file system scan" );
+                            queueLength.incrementAndGet();
+
+                            while ( fileIterator.hasNext() ) {
+                                LocatedFileStatus lfs = fileIterator.next();
+            
+                                synchronized( service ) {
+                                    // submit each file read as parallel executable operation
+                                    service.submit( (new Runnable(){
+                                        private Path scanPath = null;
+                
+                                        Runnable setPath( Path p ) {
+                                            queueLength.incrementAndGet();
+                                            scanPath = p;
+                                            return this;
+                                        }
+                                    
+                                        @Override
+                                        public void run() {
+                                            try {
+                                                if ( !cancelled ) 
+                                                    processFile( scanPath );
+                                            }
+                                            catch( Throwable thr ) {
+                                                thr.printStackTrace();
+                                            }
+                                            finally {
+                                                queueLength.decrementAndGet();
+                                            }
+                                        }
+                                    }).setPath( lfs.getPath() ) );
+                                }
                             }
-                        
-                            @Override
-                            public void run() {
-                                try {
-                                    if ( !cancelled ) 
-                                        processFile( scanPath );
-                                }
-                                catch( Throwable thr ) {
-                                    thr.printStackTrace();
-                                }
-                                finally {
-                                    queueLength.decrementAndGet();
-                                }
-                            }
-                        }).setPath( lfs.getPath() ) );
+
+                            queueLength.decrementAndGet();
+                            LOG.info( "File list scan complete." );
+                        }
+                        catch( IOException ioe ) {
+                            LOG.error( "Failed to iterate files in file system", ioe );
+                            System.exit( 8 );
+                        }
+                    }
+                }).setIterator( it );
+
+                synchronized( service ) {
+                    service.submit( scanTask );
+                }
+
+                // wait for up to 500ms for the thread to start
+                int maxLoops = 50;
+                while ( queueLength.get() < 1 && maxLoops-- > 0 ) {
+                    try {
+                        Thread.sleep( 10 );
+                    }
+                    catch( InterruptedException ie ) {
+                        // ignore
                     }
                 }
             }
@@ -94,7 +138,8 @@ abstract class MapBase {
                 throw new IllegalArgumentException( "The specified path is not a directory" );
         }
         catch( IOException ioe ) {
-            ioe.printStackTrace();
+            LOG.error( "Failed to get file system for file scan", ioe );
+            System.exit(8);
         }
     }    
 
@@ -104,7 +149,7 @@ abstract class MapBase {
      * 
      * @return The amount of running and waiting file reading tasks
      */
-    public static int getQueueLength() {
+    public static int getQueueLength() { 
         return queueLength.get();
     }
 
@@ -117,6 +162,10 @@ abstract class MapBase {
      * @param reporter Used to report progress (or null if not required)
      */
     public static void waitForFinish( WaitReporter reporter ) {
+        boolean hadOneReport = false;
+
+        LOG.info( "Starting to wait for completion of event processing" );
+
         while ( 0 < queueLength.get() ) {
             try {
                 Thread.sleep( 1000 );
@@ -125,8 +174,10 @@ abstract class MapBase {
                 break;
             }
 
-            if ( null != reporter ) 
+            if ( null != reporter ) {
+                hadOneReport = true;
                 cancelled |= reporter.reportWaitStaus();
+            }
         }
 
         // terminate the executor
@@ -134,6 +185,10 @@ abstract class MapBase {
             service.shutdown();
             service = null;
         }
+
+        // produce at least one output report
+        if ( null != reporter && !hadOneReport )
+            reporter.reportWaitStaus();
     }
 
     /**

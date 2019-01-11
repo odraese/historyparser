@@ -1,4 +1,4 @@
-package com.hortonworks.historyparser;
+package com.cloudera.historyparser;
 
 import static com.google.common.base.Preconditions.checkArgument;
 

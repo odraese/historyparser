@@ -1,4 +1,4 @@
-package com.hortonworks.historyparser;
+package com.cloudera.historyparser;
 
 import java.io.IOException;
 import java.util.ArrayList;

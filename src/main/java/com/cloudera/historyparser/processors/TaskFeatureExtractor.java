@@ -1,4 +1,4 @@
-package com.hortonworks.historyparser.processors;
+package com.cloudera.historyparser.processors;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -9,7 +9,7 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.HashMap;
 
-import com.hortonworks.historyparser.EventProcessor;
+import com.cloudera.historyparser.EventProcessor;
 
 import org.apache.tez.dag.history.logging.proto.HistoryLoggerProtos.HistoryEventProto;
 import org.apache.tez.dag.history.logging.proto.HistoryLoggerProtos.KVPair;
@@ -163,7 +163,10 @@ public class TaskFeatureExtractor implements EventProcessor {
             appendCounter( counters, "HDFS_BYTES_WRITTEN" );
             appendCounter( counters, "HDFS_READ_OPS" );
             appendCounter( counters, "HDFS_WRITE_OPS" );
-            appendCounter( counters, "TASK_DURATION_MILLIS" );
+
+            // task duration might potentially be calculated
+            appendTaskDuration( event, counters );
+
             appendCounter( counters, "INPUT_RECORDS_PROCESSED" );
             appendCounter( counters, "INPUT_SPLIT_LENGTH_BYTES" );
             appendCounter( counters, "CREATED_FILES" );
@@ -205,6 +208,40 @@ public class TaskFeatureExtractor implements EventProcessor {
     private void appendCounter( JSONObject root, String counterName ) {
         Object counter = getCounterValue( root, counterName );
         sb.append( (null==counter?"":counter).toString() ).append( '|' );
+    }
+
+    /**
+     * Helper to find or calcualte the task duration.
+     * Depending on the source of the @c HistoryEventProto, the task duration might
+     * either be a normal counter field or it needs to be calculated from base event
+     * data fields. This method tries to find the counter first and falls back to
+     * calculating the task duration if the counter was not found.
+     * 
+     * @param event The source event
+     * @param counters Already extracted counters object from event's data
+     */
+    private void appendTaskDuration( HistoryEventProto event, JSONObject counters ) {
+        // there might be a need to calculate task duration by here if source was ATS
+        if ( null == getCounterValue( counters, "TASK_DURATION_MILLIS" ) ) {
+            String endTime = getEventValue( event, "endTime" );
+            String startTime = getEventValue( event, "startTime" );
+
+            if ( null != endTime && null != startTime ) {
+                try {
+                    sb.append( Long.parseLong( endTime ) - Long.parseLong( startTime ) );
+                }
+                catch( Throwable thr ) {
+                    // ignore conversion errors
+                }
+                finally {
+                    sb.append( '|' );
+                }
+            }
+            else 
+                sb.append( '|' );
+        }
+        else
+            appendCounter( counters, "TASK_DURATION_MILLIS" );
     }
 
     /**
@@ -306,7 +343,6 @@ public class TaskFeatureExtractor implements EventProcessor {
             }
             catch( ParseException pe ) {
                 LOG.error( "Invalid JSON document found in servicePlugin of " + VERTEX_INIT, pe );
-                pe.printStackTrace();
             }
         }
 

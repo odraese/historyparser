@@ -1,17 +1,16 @@
-package com.hortonworks.historyparser;
+package com.cloudera.historyparser;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
-import static com.google.common.base.Preconditions.checkArgument;
 
 import java.util.List;
 
-import com.hortonworks.historyparser.processors.TaskFeatureExtractor;
-import com.hortonworks.historyparser.processors.TaskTimeEventProcessor;
+import com.cloudera.historyparser.processors.TaskFeatureExtractor;
+import com.cloudera.historyparser.processors.TaskTimeEventProcessor;
 
 import org.apache.hadoop.fs.Path;
 import org.apache.tez.dag.history.logging.proto.HistoryLoggerProtos.HistoryEventProto;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,15 +23,12 @@ import org.slf4j.LoggerFactory;
  * maximum event amount, which @c EcentProcessor to use and so on...
  */
 public class App {
-    private static final int PROCESSOR_ARG_IDX     = 0;    ///< program argument index for processor
-    private static final int SOURCE_DIR_ARG_IDX    = 1;    ///< program argument index for source dir
-    private static final int TARGET_REPORT_ARG_IDX = 2;    ///< program argument index for report
+    private final static Logger LOG = LoggerFactory.getLogger(App.class);
 
-    private final static Logger LOG = LoggerFactory.getLogger( App.class );
-
-    private Path           baseDir       = null;               ///< base directory with protobuf content
+    private Path baseDir = null; /// < base directory with protobuf content
     private QueryMap       queryMap      = null;               ///< content of the query_data directory
     private DagMap         dagMap        = null;               ///< content of the dag_data directory
+    private ATSMap         atsMap        = null;
     private EventProcessor procssor      = null;               ///< consumer for dag_data events
     private int            maxEvents     = Integer.MAX_VALUE;  ///< puts a limit on read events
     private boolean        readQueryData = true;               ///< allows skipping of query_data read
@@ -159,6 +155,48 @@ public class App {
     }
 
     /**
+     * Triggers the reading of ATS (dag) event data.
+     * If the data is supplied via JSON ATS files, rather than a sequence file of HistoryEventProto
+     * instances, then this method is used to utilize the @c ATSMap bridge, which converts the
+     * JSON files to HistoryEventProto instances. This potentially allows the reuse of the
+     * event processors - even if right now only @c TaskFeatureExtractor is supported for ATS.
+     */
+    private void readATSFiles() {
+        checkState( null == atsMap , "The ATS data has already been read" );
+        checkState( useStreaming, "ATS mode currently supports on streaming processing" );
+
+        LOG.info( "Start reading the ATS files" );
+
+        atsMap = new ATSMap( baseDir, procssor );
+
+        MapBase.waitForFinish( new MapBase.WaitReporter(){
+            @Override
+            public boolean reportWaitStaus() {
+                StringBuffer sb = new StringBuffer();
+                int survivors = atsMap.getTotalNumberEvents() - atsMap.getFilteredEvents();
+
+                sb.append( "foundFiles: " );
+                sb.append( atsMap.getFoundFiles() );
+                sb.append( ", qLength: " );
+                sb.append( MapBase.getQueueLength() );
+                sb.append( ", totalDAGEvents: " );
+                sb.append( atsMap.getTotalNumberEvents() );
+                sb.append( ", filteredDAGEvents: " );
+                sb.append( atsMap.getFilteredEvents() );
+                sb.append( ", survivingDAGEvents: " );
+                sb.append( survivors );
+                if ( 0 < atsMap.getTotalNumberEvents() ) {
+                    sb.append( ", survivingDAGPercent: " );
+                    sb.append( (survivors * 100) / atsMap.getTotalNumberEvents() );
+                    sb.append( '%' );
+                }
+
+                LOG.info( sb.toString() );
+                return maxEvents <= survivors;
+            } } );
+    }
+
+    /**
      * Iterates over all read event data and forwards these to the processor.
      * You probably want to adjust this method, if you need to deal with the query_data events
      * from the manifest. Otherwise, this method simply pumps all the events into the @c
@@ -195,18 +233,18 @@ public class App {
      * This helper creates the right processor instance and configrues the application
      * for it.
      * 
-     * @param args The program arguments
+     * @param parsedArgs The program arguments
      * @param processor The class identifier for the processor
      */
-    private void setupFor( String[] args, Class<?> processor ) {
+    private void setupFor( ProgramArgs parsedArgs, Class<?> processor ) {
         EventProcessor p = null;
 
         if ( TaskTimeEventProcessor.class == processor ) {
-            p = new TaskTimeEventProcessor( args[TARGET_REPORT_ARG_IDX], false );
+            p = new TaskTimeEventProcessor( parsedArgs.targetReport, false );
             setReadQueryData( false );          // query_data (QueryMap) is not needed    
         }
         else if ( TaskFeatureExtractor.class == processor ) {
-            p = new TaskFeatureExtractor( args[TARGET_REPORT_ARG_IDX] );
+            p = new TaskFeatureExtractor( parsedArgs.targetReport );
             setReadQueryData( false );          // query_data (QueryMap) is not needed    
             setStreaming( true );               // pass events directly to processor
         }
@@ -215,8 +253,93 @@ public class App {
             throw new IllegalArgumentException( "Unsupported processor class" );
 
         // for debugging, you can limit the amount of data to read
-        // setEventLimit( 1000 );
+        if ( 0 < parsedArgs.limitEvents ) 
+            setEventLimit( parsedArgs.limitEvents );
+
         setEventProcessor( p );
+    }
+
+    /**
+     * Helper construct to parse the program arguments.
+     * This helper iterates the program arguments and places them into the accessible
+     * member variables. 
+     */
+    private static class ProgramArgs {
+        String  processorName   = null;    ///< name of the event processor
+        String  sourceDirectory = null;    ///< source directory (after -i option)
+        String  targetReport    = null;    ///< target report (after -o option)
+        boolean useATS          = false;   ///< optional indicator for -ats option
+        int     limitEvents     = 0;       ///< optional content of -l limit option
+
+        /**
+         * Takes the program arguments and splits them into the member variables.
+         * 
+         * @param args The program arguments.
+         */
+        public ProgramArgs( String[] args ) {
+            for ( int i = 0; i < args.length; ++i ) {
+                if ( args[i].startsWith( "-i" ) ) 
+                    sourceDirectory = getValue( args, i++ );
+                else if ( args[i].startsWith( "-o" ) ) 
+                    targetReport = getValue( args, i++ );
+                else if ( args[i].equalsIgnoreCase( "-ats" ) )
+                    useATS = true;
+                else if ( args[i].startsWith( "-l" ) ) 
+                    limitEvents = Integer.parseInt( getValue( args, i++ ) );
+                else if ( null == processorName ) 
+                    processorName = args[i];
+                else {
+                    LOG.error( "Invalid or unsupported parameter: {}", args[i] );
+                    LOG.error( "Usage: <ProcessorName> -i <inputFileDirectory> -o <reportFileName> [-ats] [-l <limitEventVal>" );
+                    System.exit( 8 );
+                }
+            }
+
+            if ( null == processorName ) {
+                LOG.error( "Missing processorName parameter" );
+                System.exit( 8 );
+            }
+
+            if ( null == sourceDirectory ) {
+                LOG.error( "Missing source file directory" );
+                System.exit( 8 );
+            }
+
+            if ( null == targetReport ) {
+                LOG.error( "Missing target report name" );
+                System.exit( 8 );
+            }
+        }
+
+        /**
+         * Delivers the value of a program option.
+         * We support a -x=value or -x value notation for the arguments that specify a
+         * value like the source directory. This helper figures out which of the notations
+         * is used and returns the value.
+         * 
+         * @param args The source program argument
+         * @param idx The positition, where the -x portion was found in args
+         */
+        private String getValue( String[] args, int idx ) {
+            String ret = null;
+
+            String source = args[idx];
+            if ( 4 < source.length() ) {
+                if ( source.charAt( 2 ) == '=' ) {
+                    ret = source.substring( 3 );
+                }
+            }
+
+            if ( null == ret ) {
+                if ( idx + 1 < args.length ) {
+                    source = args[idx +1];
+                    if ( !source.startsWith( "-" ) ) 
+                        ret = source;
+                }
+            }
+
+            return ret;
+        }
     }
 
     /**
@@ -228,36 +351,41 @@ public class App {
      * @param args The program arguments
      */
     public static void main( String[] args ) {
+        ProgramArgs parsedArgs = new ProgramArgs( args );
         long startTime = System.currentTimeMillis();
 
-        if ( 3 > args.length ) {
-            LOG.error( "Usage: App <processorClassName> <pathToSourceFileDir> <reportName>" );
-            System.exit(8);
-        }
-
-        Path basePath = new Path( args[SOURCE_DIR_ARG_IDX] );
+        Path basePath = new Path( parsedArgs.sourceDirectory );
         App  app      = new App( basePath );
 
         // find the processor class and configure it
         String processorName = EventProcessor.class.getPackage().getName() 
-                               + ".processors." + args[PROCESSOR_ARG_IDX];
+                               + ".processors." + parsedArgs.processorName;
 
         try {
             Class<?> processor = Class.forName( processorName );
-            app.setupFor( args, processor );
+            app.setupFor( parsedArgs, processor );
         }
         catch( ClassNotFoundException cnfe ) {
             LOG.error( "Unknown event processor: {}", args[0] );
         }
         
-        app.readProtoFiles();   // we don't need queryData for this scenario
+        if ( parsedArgs.useATS ) {
+            app.readATSFiles();
 
-        if ( !app.useStreaming ) {
-            app.iterateDAGEntries();
+            LOG.info( "Done (with a total of {} events) in {}s." , 
+                      app.atsMap.getTotalNumberEvents(), 
+                      (System.currentTimeMillis() - startTime) / 1000 );
         }
-        
-        LOG.info( "Done (with a total of {} events) in {}s." , 
-                  app.dagMap.getTotalNumberEvents(), 
-                  (System.currentTimeMillis() - startTime) / 1000 );
+        else {
+            app.readProtoFiles();   // we don't need queryData for this scenario
+
+            if ( !app.useStreaming ) {
+                app.iterateDAGEntries();
+            }
+            
+            LOG.info( "Done (with a total of {} events) in {}s." , 
+                      app.dagMap.getTotalNumberEvents(), 
+                      (System.currentTimeMillis() - startTime) / 1000 );
+        }
     }
 }

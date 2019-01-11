@@ -1,6 +1,5 @@
 {
     "configurations": [
-
         {
             "type": "java",
             "name": "HistoryParser App",
@@ -8,8 +7,8 @@
             "cwd": "${workspaceFolder}",
             "console": "internalConsole",
             "stopOnEntry": false,
-            "mainClass": "com.hortonworks.historyparser.App",
-            "args": "TaskFeatureExtractor /eventSourceDir $HOME/report.txt",
+            "mainClass": "com.cloudera.historyparser.App",
+            "args": "TaskFeatureExtractor -i /mysourcedirectory/ats -o /mytargetdirectory/report.txt -ats",
             "projectName": "historyparser",
             "vmArgs": "-Xmx8G -XX:+UseG1GC -XX:+UseStringDeduplication"
         }
