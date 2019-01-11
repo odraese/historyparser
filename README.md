@@ -18,8 +18,16 @@ to adjust the arguments in the POM if you want to run the program via Maven.
 
 ###  Starting the tool
 ```
-mvn compile exec:java -Dexec.args="TaskTimeEventProcessor /sourcePath targetFile.txt"
+mvn compile exec:java -Dexec.args="TaskTimeEventProcessor -i /sourcePath -o targetFile.txt"
 ```
+
+### ATS Support
+ATS source support was added to this tool and can be used by specifying the `-ats` command line
+option. The content of the source directory is then supposed to be ATS data (JSON format of
+the events). Internally, these will be converted into HistoryEventProto instances and then
+passed on the the existing @c EventProcessor instances. 
+Consuming ATS input is less efficient than the HistoryProtoEvent instances stored in a 
+sequence file within a dag_data directory.
 
 ## Current event processors
 **Both processors extract and work on LLAP related tasks only!**
